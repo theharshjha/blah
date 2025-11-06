@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Flux Kontext AI</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 15px;
+            font-family: Arial, sans-serif;
+            background: #2c2c2c;
+            color: #e0e0e0;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            gap: 15px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], textarea, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #3a3a3a;
+            color: #fff;
+            box-sizing: border-box;
+        }
+        textarea {
+            height: 100px;
+            resize: vertical;
+        }
+        button {
+            background: #4a90e2;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #357abd;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background: #2e7d32;
+            color: white;
+        }
+        .error {
+            background: #c62828;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Flux Kontext AI</h2>
+        
+        <div class="form-group">
+            <label for="apiKey">API Key:</label>
+            <input type="text" id="apiKey" placeholder="Enter your Flux Kontext API key">
+        </div>
+
+        <div class="form-group">
+            <label for="operation">Operation:</label>
+            <select id="operation">
+                <option value="generate">Generate New Image</option>
+                <option value="edit">Edit Current Image</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="prompt">Prompt:</label>
+            <textarea id="prompt" placeholder="Describe the image you want to generate or edit"></textarea>
+        </div>
+
+        <div class="form-group" id="editOptions" style="display: none;">
+            <label for="strength">Edit Strength (0.1-1.0):</label>
+            <input type="number" id="strength" min="0.1" max="1.0" step="0.1" value="0.7">
+        </div>
+
+        <button id="processButton">Process</button>
+        
+        <div id="status" class="status"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const operationSelect = document.getElementById('operation');
+            const editOptions = document.getElementById('editOptions');
+            const processButton = document.getElementById('processButton');
+            const statusDiv = document.getElementById('status');
+
+            // Toggle edit options based on operation
+            operationSelect.addEventListener('change', function() {
+                editOptions.style.display = this.value === 'edit' ? 'block' : 'none';
+            });
+
+            // Handle process button click
+            processButton.addEventListener('click', async function() {
+                const apiKey = document.getElementById('apiKey').value.trim();
+                const prompt = document.getElementById('prompt').value.trim();
+                const operation = operationSelect.value;
+                const strength = parseFloat(document.getElementById('strength').value);
+
+                if (!apiKey) {
+                    showStatus('Please enter your API key', 'error');
+                    return;
+                }
+
+                if (!prompt) {
+                    showStatus('Please enter a prompt', 'error');
+                    return;
+                }
+
+                processButton.disabled = true;
+                showStatus('Processing...', '');
+
+                try {
+                    const csInterface = new CSInterface();
+                    
+                    // Save API key to extension settings
+                    csInterface.setPreferenceString('fluxKontextApiKey', apiKey);
+                    
+                    // Prepare parameters
+                    const params = {
+                        operation: operation,
+                        prompt: prompt,
+                        apiKey: apiKey
+                    };
+                    
+                    if (operation === 'edit') {
+                        params.strength = strength;          
+                        // Save current selection as layer for editing
+                        await executeScript('saveSelectionAsLayer');
+                    }
+                    
+                    // Call the Flux Kontext API
+                    const result = await executeScript('callFluxKontextAPI', JSON.stringify(params));
+                    
+                    if (result && result.success) {
+                        showStatus('Image processed successfully!', 'success');
+                        
+                        if (operation === 'edit') {
+                            // Apply the edited image
+                            await executeScript('applyEditedImage', JSON.stringify({
+                                imageUrl: result.imageUrl
+                            }));
+                        } else {
+                            // Create a new document with the generated image
+                            await executeScript('createNewDocument', JSON.stringify({
+                                imageUrl: result.imageUrl
+                            }));
+                        }
+                    } else {
+                        showStatus('Error processing image: ' + (result?.error || 'Unknown error'), 'error');
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    showStatus('Error: ' + error.message, 'error');
+                } finally {
+                    processButton.disabled = false;
+                }
+            });
+
+            function showStatus(message, type) {
+                statusDiv.textContent = message;
+                statusDiv.className = 'status';
+                if (type) {
+                    statusDiv.classList.add(type);
+                }
+                statusDiv.style.display = 'block';
+            }
+
+            function executeScript(func, params) {
+                return new Promise((resolve, reject) => {
+                    const csInterface = new CSInterface();
+                    csInterface.evalScript(`${func}(${params || ''})`, (result) => {
+                        try {
+                            if (result) {
+                                const parsed = JSON.parse(result);
+                                if (parsed.error) {
+                                    reject(new Error(parsed.error));
+                                } else {
+                                    resolve(parsed);
+                                }
+                            } else {
+                                resolve(null);
+                            }
+                        } catch (e) {
+                            reject(e);
+                        }
+                    });
+                });
+            }
+        });
+    </script>
+</body>
+</html>
